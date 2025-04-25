@@ -1,0 +1,849 @@
+<!DOCTYPE html>
+<!-- saved from url=(0014)about:internet -->
+<html><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<script> 
+
+//disables Google Analytics if local
+const LOCAL = (window.location.toString().substring(0,("http://localhost").length)=="http://localhost")?true:false;
+var DEBUG = false; //logs info to console for debugging
+var VERBOSE = false; //will try to output verbose errors in an easy-to-see way
+if(window.location.href.replaceAll("?","&").indexOf("&debug=1")>-1) { //allows users to report errors better
+	DEBUG = true; VERBOSE = true;
+}
+var isEmbedded = false;
+try {
+	if(window.parent.location.href!=window.location.href) {
+		isEmbedded = true;
+	}
+} catch(err) {
+	isEmbedded = true;
+}
+const EMBEDDED = isEmbedded;
+
+/* A simple function that will keep track when elements are loaded, for debugging. */
+function loaded(element) { element.loaded = true; }
+
+/* A lightweight (?) wrapper for console.log that allows me to output
+ * the Javascript console to a textarea so that users who are having trouble
+ * getting the site working can send me error info more easily. */
+if(DEBUG && VERBOSE) {
+	var errorbacklog = []; //to log events before the textarea is loaded
+	console._log = console.log;
+	console._warn = console.warn;
+	console._error = console.error;
+
+	parsestack = (stack) => {
+		var line, src;
+		if(stack) {
+			stack = stack.split("\n");
+			if(stack.length>1) {
+				stack = stack[3];
+				if(stack) {
+					stack = stack.split(":");
+					if(stack.length>1) {
+						var s1 = stack[1].split("/");
+						src = s1[s1.length-1];
+						if(src=="") src = "index";
+						line = stack[2];
+					}
+				}
+			}
+		}
+		return {line:line,src:src};
+	}
+
+	logger = (type,...data) => {
+		var src = undefined, line = undefined;
+		var stack = new Error().stack;
+		var linesrc = parsestack(stack);
+		line = linesrc.line;
+		src = linesrc.src;
+		var msg = [];
+		for(var i in data) {
+			switch(typeof data[i]) {
+				case "string": case "number": case "boolean":  
+					msg.push(data[i].toString().replaceAll("\n",""));
+				break;
+				case "undefined":
+					msg.push("undefined");
+				break;
+				default:
+					if(data[i]==null) {
+						msg.push("[null]",data[i]);
+					} else {
+						if(data[i].stack) {
+							var linesrc = parsestack(stack);
+							line = linesrc.line;
+							src = linesrc.src;
+						}
+						if(!Object(data[i]).name) {
+							if(typeof data[i].constructor != "undefined") {
+								var name = Object(data[i].constructor).name;
+							} else {
+								var name = "unknown";
+							}
+						} else {
+							var name = Object(data[i]).name;
+						}
+						if(name=="Object") name="obj";
+						if(typeof data[i].message=="string") {
+							msg.push(name+":"+data[i].message);
+						} else {
+							msg.push(name+":"+simpleObject(data[i]));
+						}
+					}
+				break;
+			}
+		}
+		switch(type) {
+			case "log": console._log(...data); break;
+			case "warn": console._warn(...data); break;
+			case "error": console._error(...data); break;
+			default: console._log(...data); break; 
+		}
+		var out = {type:type,msg:msg.join("\t"),line:line,src:src}
+		logMessage(out);
+		return out;
+	}
+
+	console.log = (...data) => {
+		logger("log",...data);
+	}
+	console.error = (...data) => {
+		logger("err",...data);
+	}
+	console.warn = (...data) => {
+		logger("wrn",...data);
+	}
+
+	// Make a simplified, non-circular copy of an object and
+	// returns it as JSON if asJSON is true.
+	// Originally based on https://stackoverflow.com/a/31557814
+	function simpleObject (object,asJSON=true,depth=0) {
+		var max_depth=1;
+		var simpleObj = {};
+		//if(depth==0) console._log(object);
+		/*if(Array.isArray(object)) {
+			var arr = {};
+			for(var i in object) {
+				arr[i] = object[i];
+			}
+			return simpleObject(arr,asJSON,depth);
+		}*/
+		if(typeof object == "object" && object!==null) {
+			for(var keys in Object.keys(object)){
+				var prop = Object.keys(object)[keys];
+				var newobj = undefined;
+				if (!object.hasOwnProperty(prop)){
+					newobj = "_object";
+				}
+				if (typeof(object[prop]) == 'object'){
+					if(depth<max_depth) {
+						if(Array.isArray(object[prop])) {
+							newobj = [];
+							for(var i in object[prop]) {
+								newobj.push(simpleObject(object[prop][i],false,depth+1))
+							}
+						} else {
+							newobj = simpleObject(object[prop],false,depth+1);
+						}
+					} else {
+						newobj = Array.isArray(object[prop])?"[Array]":"[Object]";
+					}
+				}
+				if (typeof(object[prop]) == 'function'){
+					continue
+				}
+				simpleObj[prop] = newobj!=undefined?newobj:object[prop];
+			}
+			/*if(depth==0) {
+				console._log(">",simpleObj);
+				console._log(">>",JSON.parse(JSON.stringify(simpleObj)))
+			}*/
+		} else {
+			if(object==null) {
+				simpleObj = "[null]";
+			} else {
+				simpleObj = object.toString();
+			}
+		}
+		if(asJSON) {
+			return JSON.stringify(simpleObj);
+		} else {
+			return simpleObj;
+		}
+	};
+
+	/* A fairly simple error logging function that outputs to a textarea */ 
+	function logMessage(msg,backlog=false) {
+		var log = document.getElementById("debugLog");
+		if(!log) { //DOM has not loaded
+			errorbacklog.push(msg);
+		} else {
+			if(errorbacklog.length && backlog==false) {
+				for(var i in errorbacklog) { logMessage(errorbacklog[i],true) }
+				errorbacklog = [];
+			}
+			var errs = log.innerHTML;
+			if(typeof msg=="object") {
+				var oo = [];
+				if(msg.ignore) return; //will not log -- just used to flush queue
+				oo.push(msg.type?msg.type:"log");
+				if(msg.src) oo.push(msg.src+(msg.line?":"+msg.line:""));
+				if(msg.line && !msg.src) oo.push(":"+msg.line);
+				if(msg.msg) oo.push('"'+msg.msg+'"');
+				if(msg.obj) oo.push(JSON.stringify(msg.obj));
+				var out = oo.join("\t");
+			} else {
+				var out = msg;
+			}
+			if(errs.length>0) out=errs+"\n"+out;
+			log.innerHTML = out;
+		}
+	}
+
+	/* Checks if for some reason the error logging function has failed to output
+	 * (e.g., if the DOM absolutely could not be loaded, this might still run. */
+	setInterval(()=>{
+		if(errorbacklog.length>0) {
+			logMessage({ignore:true});
+			setTimeout(()=> {
+				if(errorbacklog.length>0) {
+					var msg = "There were errors that could not be properly output. Do you want to copy them to the clipboad?\n\nA sample:\n";
+					var errormsg = "";
+					for(var i in errorbacklog) {
+						if(typeof errorbacklog[i]=="object") {
+							errormsg+=simpleObject(errorbacklog[i])+";\n";
+						} else {
+							errormsg+= errorbacklog[i]+";\n";
+						}
+					}
+					if(window.confirm(msg+errormsg)) {						
+						copyText(errormsg,()=>{
+							alert("Error information was copied to clipboard.")	
+						},(err)=> {
+							alert("Error information could not be copied to the clipboard: "+err);	
+						});
+					}
+					errorbacklog = [];
+				}
+			},100);
+		}
+	},500);
+	
+	window.onerror = function(msg,src,line) {
+		var src1 = src.split("/");
+		logMessage({type:"err",msg:msg,src:src1[src1.length-1],line:line});
+	}
+
+
+	/* Debug info that is added to log when copying */
+	function debugInfo() {
+		var o = "";
+		o ='NUKEMAP '+ver+';'+(new Date().toISOString())+';';
+		o+="href="+window.location.href+';';
+		o+="platform="+navigator.platform+";";
+		o+="userAgent="+navigator.userAgent+";";
+		o+="language="+navigator.language+";"; 
+		o+="dets="+simpleObject(dets)+";";
+		o+="isHighDensity="+isHighDensity()+";";
+		o+="webGLsupported="+webGLsupported()+";";
+		if(typeof m == "undefined") {
+			o+="mode=undefined;";
+		} else {
+			o+="mode="+m.mode+";";
+		}
+		console._log(o);
+		return o;
+	}
+}
+
+/* Will copy text to clipboard if browser allows it. */
+function copyText(text,success,fail) {
+	navigator.clipboard
+	.writeText(text)
+	.then(()=>{
+		if(typeof success=="function") success(text);
+	})
+	.catch((err)=> {
+		if(typeof fail=="function") fail(err);
+	})
+}
+
+/* Copy debug log to clipboard */
+function debugCopy() {
+	copyText(document.getElementById('debugLog').innerHTML+"\n"+debugInfo(),()=>{
+		alert("The log data was copied to the clipboard.");
+	},(err)=> {
+		alert("The browser would not allow the text to be copied to the clipboard: "+err);
+	})
+}
+	
+</script>
+
+<!-- Google tag (gtag.js) -->
+<script async="" src="./nukemap_files/js" loaded="true"></script>
+<script>
+	if(!LOCAL) {
+		window.dataLayer = window.dataLayer || [];
+  	function gtag(){dataLayer.push(arguments);}
+  	gtag('js', new Date());
+  	gtag('config', 'G-WF0S9ES68V');
+	}
+</script>
+
+<!-- header info -->
+<title>nukemap</title>
+
+
+<!-- core scripts -->
+<script type="text/javascript" src="./nukemap_files/jquery-3.6.0.min.js" onload="loaded(this);"></script>
+
+<!-- fonts -->
+<link rel="preconnect" href="https://fonts.googleapis.com/" loaded="true">
+<link rel="preconnect" href="https://fonts.gstatic.com/" crossorigin="" loaded="true">
+<link rel="preload" as="style" href="./nukemap_files/css2" loaded="true">
+<link rel="stylesheet" href="./nukemap_files/css2" onload="loaded(this);">
+
+<!-- globals -->
+<script>
+/* globals for mapUI */
+var dynamicAssets = "https://db.nuclearsecrecy.com/server-scripts/"; //database server with PHP files 
+var imageAssets = "https://img.nuclearsecrecy.com/"; //serverless image assets
+var staticAssets = "https://static.nuclearsecrecy.com/"; //static scripts, css
+
+var MAPUI = {ready:false}; //will hold the initialized mapUI object
+var rasterLayers, vectorLayers; //holds layer info
+var mapUI_modes = {}; //holds modes
+var mapUI_settings = {}// holds extra settings
+
+var forceMode = undefined; //if set to 1, will force raster. if set to 2, will force vector.
+//setting url variable `mode` will force render mode.
+var url = window.location.href.replaceAll("?","&");
+if(url.indexOf("&")>-1) {
+	var urlv = url.split("&");
+	for(var i in urlv) {
+		var urlv_ = urlv[i].split("=");
+		if(urlv_[0]=="mode") {
+			forceMode = +urlv_[1];			
+		}
+	}
+}
+
+</script>
+
+<!-- map system -->
+<script src="./nukemap_files/mapUI_leaflet.js" onload="loaded(this);"></script>
+<script src="./nukemap_files/mapUI_leaflet_pmaps.js" onload="loaded(this);"></script>
+<script src="./nukemap_files/mapUI_maplibre.js" onload="loaded(this);"></script>
+<script src="./nukemap_files/mapUI.js" onload="loaded(this);"></script>
+<script src="./nukemap_files/mapUI_nukemap.js" onload="loaded(this);"></script>
+
+<!-- NUKEMAP libraries -->
+<link rel="stylesheet" type="text/css" href="./nukemap_files/nukemap2.css" onload="loaded(this);">
+<script type="text/javascript" src="./nukemap_files/geo.js" onload="loaded(this);"></script>
+<script type="text/javascript" src="./nukemap_files/closest_city.js" onload="loaded(this);"></script>
+<script type="text/javascript" src="./nukemap_files/shared.js" onload="loaded(this);"></script>
+<script type="text/javascript" src="./nukemap_files/nukemap2.js" onload="loaded(this);"></script>
+<script type="text/javascript" src="./nukemap_files/presets.js" onload="loaded(this);"></script>
+<script type="text/javascript" src="./nukemap_files/nukeeffects.js" onload="loaded(this);"></script>
+<script type="text/javascript" src="./nukemap_files/nukekmz.js" onload="loaded(this);"></script>
+<script type="text/javascript" src="./nukemap_files/casualties.js" onload="loaded(this);"></script>
+<script type="text/javascript" src="./nukemap_files/fallout.js" onload="loaded(this);"></script>
+<script type="text/javascript" src="./nukemap_files/city_data.js" onload="loaded(this);"></script>
+
+<!-- things to do before page is finished loading -->
+<script type="text/javascript">
+/* TO DO? -- 
+- weird bugs with fallout angles on multiple dets after using the det list editor? probably has to do with the windsock?
+*/
+
+//version
+var ver = 0.01;
+if(DEBUG) console.log("NUKEMAP, version "+ver);
+
+//global for determining if the map scripts have loaded
+var MAP_LOADED = false;
+
+var map_loaded_ok = false;
+var error_displayed = false;
+var map_error = false;
+
+function load_timeout_detected() {
+	if(!map_loaded_ok & !error_displayed) {
+		document.getElementById("preload_cap").className = "error";
+		document.getElementById("preload_cap").innerHTML = "Could not connect to servers.<br>Please try again later.";
+		document.getElementById("loadingMapMarker").style.filter = "blur(0.5vh)";
+		document.getElementById("loadingMapMarker").innerHTML = "<div id='atomqmark'>?</div>";
+
+		//$("#loadingMapMarker").html("<div id='atomqmark'>?</div>");
+		var msg = "";
+		var logged = "";//"This error has been logged and will be examined.<br>";
+		if(DEBUG) console.log("Loading timeout triggered",MAPUI);
+		if(MAPUI && MAPUI.total_mapfiles>MAPUI.loaded_mapfiles) {
+			if(MAPUI.errors.length==0) {
+				msg+= "Some of the required files to load the map <b>have not yet</b> loaded. This may indicate an internet connectivity issue, or a problem with our servers. ";
+			} else {
+				msg+= "Some of the required files to load the map <b>could not</b> load. This may indicate an internet connectivity issue, or a problem with our servers. ";
+			}
+			if(DEBUG) console.error("MAPUI had errors",MAPUI.errors);
+		}
+		if(map_error) {
+			msg+= "The map code triggered an error: \""+map_error+"\" ";
+		} 
+		if(typeof $ !="function") {
+			msg+= "A required code library did not load. This may indicate an internet connectivity problem, or a problem with our servers. ";
+		}
+		if(!msg) {
+			msg+= "There may be a problem. ";
+		}
+		var embedtext = EMBEDDED?"<br><br>You might also try using the main site: <b><a href='https://nuclearsecrecy.com/nukemap/' target='_blank'>NUKEMAP</a></b>":"";
+		document.getElementById("loadingCap").innerHTML = "<span>The map is taking an overly-long time to load. "+msg+"<br>"+logged+"Please try back again later."+embedtext+"</span>";
+	}
+}
+var load_timeout_interval = setTimeout(()=> { load_timeout_detected() },10000);
+
+//set startup function
+window.onload = function() {
+	if(DEBUG && VERBOSE) {
+		console.log(debugInfo());
+	}
+	if(DEBUG) console.log("window onload");
+
+	if(VERBOSE) {
+		/* we add this here so that if for some reason this never gets called,
+		 * it doesn't prevent logging output. */
+		var l = document.createElement("TEXTAREA");
+		l.setAttribute("id","debugLog");
+		l.setAttribute("readonly",true);
+		document.getElementById("debugLogDiv").appendChild(l);
+		document.getElementById("debugOverlayShow").style.display = "block";
+		var missing = [];
+		var elements = document.getElementsByTagName("script");
+		for(var i = 0; i<elements.length; i++) {
+			if(!elements[i].loaded && elements[i].src && elements[i].getAttribute("loaded")!="true") missing.push(elements[i].src);
+		}
+		var elements = document.getElementsByTagName("link");
+		for(var i = 0; i<elements.length; i++) {
+			if(!elements[i].loaded && elements[i].href && elements[i].getAttribute("loaded")!="true") missing.push(elements[i].href);
+		}
+		if(missing.length>0) {
+			for(var i in missing) {
+				logMessage("NOT LOADED: "+missing[i]);
+			}
+		}
+	}
+
+	if(EMBEDDED && !(window.location.href.replaceAll("?","&").indexOf("&embedlive=1")>-1)) {
+		clearInterval(load_timeout_interval); //don't start timeout until loaded
+		document.getElementById("embedded").style.display = "block";
+		document.getElementById("embedded").onclick = ()=> {
+			load_timeout_interval = setTimeout(()=> { load_timeout_detected() },10000);
+			document.getElementById("embedded").style.display = "none";
+			start();
+		}
+		var u = getUrlVars();
+		if(u!==false) {
+			if(u.embedbackcolor!=undefined) document.getElementById("embedded").style.backgroundColor = u.embedbackcolor;
+			if(u.embedtextcolor!=undefined) document.getElementById("embedded_cap").style.color = u.embedtextcolor;
+			if(u.embedtext!=undefined) document.getElementById("embedded_cap").innerHTML = u.embedtext;
+			if(u.embedbackimage!=undefined) {
+				if(u.embedbackimage==0) {
+					document.getElementById("embedded_back").style.display = "none";
+				} else {
+					document.getElementById("embedded_back").style.backgroundImage = "url('"+u.embedbackimage+"')";
+				}
+			}
+		}
+	} else {
+		start();
+	}
+};
+</script>
+<style>
+/* Debugging/error screen */
+#debugOverlay {
+	display: none;
+	font-family: "Consolas", "Courier New","Courier",monospace;
+	z-index: 10010;
+	background-color: silver;
+	position: fixed;
+	top: 0px; left: 0px; right: 0px; bottom: 0px;
+	padding: 1em;
+}
+#debugLog {
+	font-family: Consolas, "Courier New", Courier, monospace;
+	width: 100%;
+	height: 80vh;
+  overflow-x: scroll;
+  white-space: pre;
+  overflow-wrap: normal;
+	padding: 0.5em;
+	padding-right: 0;
+}
+#debugOverlayHide {
+	position: fixed;
+	top: 0.5em;
+	right: 0.5em;
+	font-size: 18pt;
+	height: 1.5em;
+	width: 1.5em;
+}
+#debugOverlayShow {
+	display: none;
+	position: fixed;
+	left: 0.5em;
+	bottom: 0.5em;
+	font-size: 14pt;
+	font-weight: bold;
+	z-index: 10009;
+	box-shadow: 0px 0px 0px 3px red;
+}
+#debugCopyLog {
+	font-size: 12pt;
+	padding: 0.5em;
+}
+#debugCopyLogDiv {
+	text-align: center;
+}
+
+/* loads no matter if css file does */
+#preload {
+	position: fixed;
+	top: 0px;
+	left: 0px;
+	right: 0px;
+	bottom: 0px;
+	background-color: #e0e0e0;
+	font-family: "Lato","Helvetica Neue","Helvetica","Arial",sans-serif;
+}
+#preload_text {
+	margin-top: 20vh;
+	width: 100%;
+	text-align: center;
+}
+#preload_title {
+	color: #f0f0f0;
+	text-shadow: 0px 0px 0.2em rgba(0,0,0,0.1);
+	font-weight: 200;
+	letter-spacing: 0.05em;
+	font-size: 4em;
+}
+#preload_cap {
+	margin-top: 2vh;
+	color: silver;
+	letter-spacing: 0.05em;
+	font-size: 2em;
+}
+.error {
+	color: red !important;
+	font-weight: bold;
+}
+img {
+	display: none;
+}
+@media only screen and (max-device-width: 1280px) and (orientation: portrait) {
+	#preload_title {
+		font-size: 13vw;
+	}
+	#preload_cap {
+		font-size: 5vw;
+	}
+}
+@media only screen and (max-device-width: 1280px) and (orientation: landscape) {
+	#preload_title {
+		font-size: 12vw;
+	}
+	#preload_cap {
+		font-size: 4vw;
+	}
+}
+
+</style>
+<script type="text/javascript" src="./nukemap_files/maplibre-gl.js"></script><script type="text/javascript" src="./nukemap_files/mGL.js"></script><script type="text/javascript" src="./nukemap_files/sources.js"></script><link rel="stylesheet" href="./nukemap_files/leaflet.css"><link rel="stylesheet" href="./nukemap_files/maplibre-gl.css"><link type="text/css" rel="stylesheet" href="./nukemap_files/millions.css"></head>
+<!-- html DOM -->
+body>
+	<div id="theMap">
+	<div id="loadingMap">
+		<div id="loadingMapMarker"><div id="loadingMapAtom" class="atomspin"></div></div>
+		<div id="loadingCap">Starting up...</div>
+		<div id="loadingBarHolder"><div id="loadingBar"></div></div>
+	</div>
+</div>
+<div id="theSettings">
+	<div id="topFrame">
+		<span id="title" class='nukemap_name'><a href="https://nuclearsecrecy.com/nukemap/"><span lang="capNUKEMAP">NUKEMAP</span></a></span><span style="display:none;"> </span><sub id="version_faq"><span id="version"></span> <span id="faq_line">: <a id="faq" href="./faq/"><span lang="capFAQ">FAQ</span></a></span></sub>
+		<div id="nukemap3d"><em><span lang="capYouMightTry">You might also try</span>:</em><br><a href="../missilemap/"><span lang="capMISSILEMAP" class='nukemap_name'>MISSILEMAP</span></a></div>
+		<br>
+		<hr>
+	</div>
+	<div id="bottomFrame">
+		<div id="panemoverholder"><div id="panemover"></div></div>
+		<div id="city">
+			<div id="captioncity">
+				<span class="numbered" id="numbered_1">1.</span> <span lang="capDragMarker"><b>Drag</b> the marker to wherever you'd like to target.</span><br>
+			</div>
+			<div id="city_preset">
+				<select name="presetcity" id="presetcity" onchange="jumpToSitePreset(this.value);" disabled>
+					<option lang="capPreset">Or you can select a preset...</option>
+				</select>
+				<br>
+			</div>
+			<div id="city_input">
+				<small><i><span lang="capCityName">Or type in the name of a city:</span></i></small> <span><input type="text" id="geocodeInput" disabled/></span> <span><button disabled onclick="jumpToGeocode(); return false;"><span lang="capGO">Go</span></button></span><br>
+			</div>
+		</div>
+		<hr id="city_hr">
+		<div id="yield_div">
+			<div>
+				<span class="numbered" id="numbered_2">2.</span> <span lang="capEnterYield"><b>Choose a warhead yield:</b></span> <span class="def-bracket1">[</span><abbr class="def" title="The yield is the explosive power of the nuclear detonation to be modeled, expressed in units of TNT equivalent.">?</abbr><span class="def-bracket2">]</span> 
+				<span class='mobilegroup'>
+					<span><input type="text" id="theKt" value="" disabled/></span> <span lang="capYieldKilotons">kilotons</span> <span class="def-bracket1">[</span><abbr class="def" title="1 kiloton = 1,000 tons of TNT equivalent. 1 megaton = 1,000 kilotons = 1,000,000 tons of TNT equivalent.">?</abbr><span class="def-bracket2">]</span><br>
+				</span>
+			</div>
+			<select name="preset" id="preset" onchange="settingsFromPreset(this.value)" disabled>
+				<option lang="capPreset">Or you can select a preset...</option>
+			</select>
+			<br id="preset_br">
+		</div>
+		<hr id="yield_hr">
+		<form name="options">
+		<div id="basic_options">
+			<div>
+				<span class="numbered" id="numbered_3">3.</span> <b>Basic options:</b> 
+				<span class="mobilegroup">
+					<em><span lang="capHeightofBurst">Height of burst</span>:</em> <span class="def-bracket1">[</span><abbr class="def" title="A surface burst means the nuclear weapon is detonated on or very near the ground. An airburst means that the weapon is detonated high enough that its fireball does not touch the ground. They have somewhat different acute effects, and very different radiological effects (e.g. fallout is primarily from surface bursts).">?</abbr><span class="def-bracket2">]</span> <span><input disabled type="radio" name="hob" id="hob_airburst" value="1"/></span> <label for="hob_airburst">Airburst</label> <span><input disabled type="radio" name="hob" id="hob_surface" value="0" checked/></span> <label for="hob_surface">Surface</label><br>
+					<em style="margin-left: 15px;"><span lang="capOtherEffects">Other effects</span>:</em> <span><input disabled type="checkbox" name="other" id="casualties_check" value="2" title="Makes estimate as to the number of injured and dead from specified blast, using population density information and the nuclear effects information."/></span> <label for="casualties_check">Casualties</label> <span><input disabled type="checkbox" title="Radioactive fallout is dust, debris, and fission products that \'fall out\' of the mushroom cloud of surface bursts." id="fallout_check_2" class="fallout_check" onchange="document.getElementById('fallout_check').checked=this.checked;"/></span> <label for="fallout_check_2">Radioactive fallout</label>
+				</span>
+			</div>
+		</div>
+		<hr id="adv_options_hr">
+		<div id="adv_options">
+			<div>
+				<span id="advanced-options-header" style="margin-left: 1em;"><b>Advanced options:</b> </span><span class='hider-arrow' id='hider-arrow' expanded='0' div="advanced_options" onclick="expand_div(this)">&nbsp;</span><br>
+				<div class="collapsed-content" id="advanced_options" style="display: none;">
+					<span style="height: 5px; display: block;"></span>
+					<div class='advanced-heading'><em><span lang="capAirburstSettings">Airburst settings</span>:</em> <span class="def-bracket1">[</span><abbr class="def" title="Airbursts can either be set to a specific burst height, or they can be set to maximize a given blast radius.">?</abbr><span class="def-bracket2">]</span></div>
+					<ul class='optionUL' style="margin-top: 2px; margin-bottom: 2px;">
+						<li><span><input type="radio" name="hob_option" id="hob_option_max" value="0"/></span> <label for="hob_option_max">Maximize airburst radii for all effects</label> <span class="def-bracket1">[</span><abbr class="def" title="Shows the radii for many different blast heights, each chosen to maximum their effects.">?</abbr><span class="def-bracket2">]</span></li>
+						<li><span><input checked type="radio" name="hob_option" id="hob_option_opt" value="1"/></span> <label for="hob_option_opt">Optimize for overpressure:</label> <input type="text" value="5" name="hob_psi" class="option_input"> psi</li>
+						<li><span><input type="radio" name="hob_option" id="hob_option_height" value="2"/></span> <label for="hob_option_height">Burst height:</label> <input type="text" value="200" name="hob_h" id="hob_h" class="option_input"> <select name="hob_h_u" id="hob_h_u"><option value="0" selected>ft</option><option value="1">m</option><option value="2">mi</option><option value="3">km</option></select></li>
+					</ul>
+					<div class='advanced-heading'><em><span lang="capOverpressureShow">Show overpressure rings for</span>:</em> <span class="def-bracket1">[</span><abbr class="def" title="Overpressure is physical blast force above standard atmospheric pressure. Here it is expressed as pounds-per-square-inch (psi) of force.">?</abbr><span class="def-bracket2">]</span></div>
+					<ul class='optionUL' >
+						<li><span><input type="checkbox" name="psi" value="3000" id="psi_3000"/></span> <label for="psi_3000">3,000 psi (destroys missile bunkers)</label></li>
+						<li><span><input type="checkbox" name="psi" value="200" id="psi_200"/></span> <label for="psi_200">200 psi (extreme damage)</label></li>
+						<li><span><input type="checkbox" name="psi" value="20" id="psi_20" checked/></span> <label for="psi_20">20 psi (heavy damage)</label></li>
+						<li><span><input type="checkbox" name="psi" value="5" id="psi_5" checked/></span> <label for="psi_5">5 psi (medium damage)</label></li>
+						<li><span><input type="checkbox" name="psi" value="1" id="psi_1" checked/></span> <label for="psi_1">1 psi (light damage)</label></li>
+						<li><span><input type="checkbox" name="psi" id="psi_other_check_1" value="-1"/></span> <label for="psi_other_check_1">Other:</label> <span><input type="text" class="option_input" name="psi_other_1" id="psi_other_1"/></span> psi <span id="addrow_psi"></span><a href="#" class="addrow" onclick="addrow('psi');" title="Add another row">[+]</a></li>
+					</ul>
+					<div class='advanced-heading'><em>Show ionizing radiation rings for:</em> <span class="def-bracket1">[</span><abbr class="def" title="Ionizing radiation is the initial high-energy burst of radiation caused by the nuclear explosion, made up primarily of neutrons and gamma rays. It is expressed here in Roentgen equivalent man (rem) units, which is a unit for radiation absorption in humans.">?</abbr><span class="def-bracket2">]</span></div>
+					<ul class='optionUL' >
+						<li><span><input type="checkbox" name="rem" value="100" id="rem_100"/></span> <label for="rem_100">100 rem (sickness, increased lifetime cancer risk)</label></li>
+						<li><span><input type="checkbox" name="rem" value="500" id="rem_500" checked/></span> <label for="rem_500">500 rem (50-90% mortality without medical care)</label></li>
+						<li><span><input type="checkbox" name="rem" value="600" id="rem_600"/></span> <label for="rem_600">600 rem (80% mortality with medical care)</label></li>
+						<li><span><input type="checkbox" name="rem" value="1000" id="rem_1000"/></span> <label for="rem_1000">1,000 rem (95% mortality with medical care)</label></li>
+						<li><span><input type="checkbox" name="rem" value="5000" id="rem_5000"/></span> <label for="rem_5000">5,000 rem (100% mortality)</label></li>
+						<li><span><input type="checkbox" name="rem" id="rem_other_check_1" value="-1"/></span> <label for="rem_other_check_1">Other:</label> <span><input type="text" class="option_input" name="rem_other_1"></span> rem <span id="addrow_rem"></span><a href="#" class="addrow" onclick="addrow('rem');" title="Add another row">[+]</a></li>
+					</ul>
+					<div class='advanced-heading'><em>Show thermal radiation rings for:</em> <span class="def-bracket1">[</span><abbr class="def" title="Thermal radiation is heat energy produced by the nuclear explosion. It is here expressed in units of calories-per-square-centimeter (cal/cm&sup2;).">?</abbr><span class="def-bracket2">]</span></div>
+					<ul class='optionUL' >
+						<li><span><input type="checkbox" name="therm" value="_3rd-100" id="therm_3rd-100" checked/></span> <label for="therm_3rd-100">Third degree burns (100% probability)</label></li>
+						<li><span><input type="checkbox" name="therm" value="_3rd-50" id="therm_3rd-50"/></span> <label for="therm_3rd-50">Third degree burns (50% probability)</label></li>
+						<li><span><input type="checkbox" name="therm" value="_2nd-50" id="therm_2nd-50"/></span> <label for="therm_2nd-50">Second degree burns (50% probability)</label></li>
+						<li><span><input type="checkbox" name="therm" value="_1st-50" id="therm_1st-50"/></span> <label for="therm_1st-50">First degree burns (50% probability)</label></li>
+						<li><span><input type="checkbox" name="therm" value="_noharm-100" id="therm_noharm-100"/></span> <label for="therm_noharm-100">Minimum radius for 100% probability of no burn</label></li>
+						<li><span><input type="checkbox" name="therm" value="35" id="therm_35"/></span> <label for="therm_35">Dry wood usually burns (35 cal/cm&sup2;)</label></li>
+						<li><span><input type="checkbox" name="therm" id="therm_other_check_1" value="-1"> <label for="therm_other_check_1">Other:</label> <span><input type="text" class="option_input" name="therm_other_1"/></span> cal/cm&sup2; <span id="addrow_therm"></span><a href="#" class="addrow" onclick="addrow('therm','cal/cm&sup2;');" title="Add another row">[+]</a></li>
+					</ul>
+					<div class='advanced-heading'><em>Other effects:</em></div>
+					<ul class='optionUL' >
+						<li><span><input type="checkbox" id="check_fireball" name="other" value="0" title="The maximum size of the initial fireball of the detonation." checked/></span> <label for="check_fireball">Fireball</label></li>
+						<li><span><input type="checkbox" id="check_crater" name="other" value="1" title="The maximum size for the crater created by the detonation, assuming a surface burst on soil."/></span> <label for="check_crater">Crater</label></li>
+						<li style="display:none;"><span><input type="checkbox" id="check_humanitarian" name="other" value="3" title="This setting attempts to indicate approximately how many hospitals, schools, firestations, and places of worship the blast would destroy, as an attempt to highlight purely humanitarian aspects of the detonation."/></span> Humanitarian impact (<input type="checkbox" name="other" value="4">plot locations)</li>
+						<li><span><input type="checkbox" name="other" title="Radioactive fallout is dust, debris, and fission products that 'fall out' of the mushroom cloud of surface bursts." onchange="document.getElementById('fallout_check_2').checked=this.checked;" class="fallout_check" id="fallout_check" value="5"/></span> <label for="fallout_check">Fallout</label></li>
+						<li><span id="fallout_submenu"><span class="fallout_submenu_dash">&rdsh;</span> wind speed:<span><input type="text" title="The average wind speed affecting the fallout cloud, in miles-per-hour." class="option_input_wind" name="fallout_wind" id="fallout_wind" value="15"/></span> mph, origin <span><input name="fallout_angle" id="fallout_angle" class="option_input_angle" value="225"/></span>&deg; <span><button onclick="getlocalwind()" id="get_local_wind" title="Gets the current wind speed/direction at the target coordinates (if possible)" disabled>Lookup</button></span><span id="wind_prog"></span></li>
+						<li><span class="fallout_submenu_dash">&rdsh;</span> fission fraction:<input title="The pecentage of the total yield that comes from nuclear fission, as opposed to nuclear fusion. For pure 'atomic' bombs, the yield is 100% fission. For 'hydrogen' bombs, the yield is usually around 50% fission, 50% fusion." type="text" class="option_input_fission" name="fallout_fission" id="fallout_fission" value="100">%</span></li>
+						<li style="display:none;"><span id="settings_cep"><input type="checkbox"id="check_cep" name="other" value="6" title="Shows the Circular Error Probable of the weapon in question -- the area where, if aimed at the designated ground zero, it might actually land."/></span> Show <a href="https://en.wikipedia.org/wiki/Circular_error_probable" target="_blank">Circular Error Probable</a>: <span><input type="text" value="0" name="cep" id="cep" class="option_input"/></span> <span><select name="cep_unit" id="cep_unit"><option value="0" selected>ft</option><option value="1">m</option><option value="2">mi</option><option value="3">km</option></select></span></span></li>
+						<li><input type="checkbox" name="other" value="7" id="check_cloud" title="The dimensions of the stabilized mushroom cloud."> <label for="check_cloud">Mushroom cloud dimensions</label></li>
+						<li><span id="ge_icon"><img src="https://img.nuclearsecrecy.com/ge_icon.png" width="10px"></span><a href="#" onclick="init_kmzmenu(); return false;">Export to Google Earth (KMZ)</a></li>
+					</ul>
+					<div style="text-align: right; display: block;">
+						<small><span><input type="checkbox" name="collapser" id="collapser" checked/></span> <label for="collapser"><em>Collapse options on "detonate"</em></label></small>
+					</div>
+				</div>
+			</div>
+		</div>
+	</form>
+	<hr style="margin-top:5px;margin-bottom:5px;" id="basic_options_hr">
+	<div id="detonate_div">
+		<div id="captiondetonate">
+			<span class="numbered" id="numbered_4">4.</span> <span lang="capDetonateInstructions"><b>Click</b> the "Detonate" button below.</span><br>
+		</div>
+		<div class="mobilegroup">
+			<button id="detonate" disabled class="btn-danger btn-large" onclick="detonate();" title="Detonate (or re-detonate) the bomb"><span lang="capDetonate">Detonate</span></button>
+			<div id="buttons_other">
+				<button id="button_clear" disabled onclick="clearmap();" title="Clear the bomb effects from map"><span lang="capClearAllEffects">Clear all effects</span></button> 
+				<button id="button_detach" disabled onclick="detach();" title="Allows you to plot multiple nuclear explosions"><span lang="capLaunchMultiple">Add new detonation</span></button> <br id="buttons_other_br">
+				<button id="button_center" disabled onclick="centercursor();" title="Move the target marker to the center of the current screen"><span lang="capCenterGroundZero">Center ground zero</span></button> 
+				<button id="button_probe" disabled onclick="add_sample_marker(this.id);" id="sample_button" title="Creates a draggable probe icon that gives effect details at a given location on the map"><span lang="capProbeLocation">Inspect location</span></button>
+			</div>
+		</div>
+		<div id="button_note_div">
+			<small id="button_note"><b>Note</b> that you can drag the target marker after you have detonated the nuke.</small>
+		</div>
+		<div id="detonate_error"></div>
+		<a name="#effects"></a>
+		<div id="theLegendCasualties"></div>
+		<div id="theLegend"></div>
+		<div id="sample_info"></div>
+		<div id="theLegendFallout"></div>
+		<div id="theLegendPlaces"></div>
+		<div id="thePermalink"></div>
+	</div>
+	<hr id="detonate_hr">
+	<div id="credits">
+		<div align="center">
+		<font color="#c00000">RCCD Hotline: 187-18</font>
+		</div>
+		<hr id="other_options_hr">
+		<div id="other_options">
+			<span lang="capOtherOptions" class="otherOptionCap">Other options:</span> <span><input type="checkbox" checked="checked" id="option_autozoom"/></span> <label for="option_autozoom"><span lang="capAutoZoom" class="otherOptionCap">Auto-zoom</span></label> <span class="def-bracket1 otherOptionCap">[</span><abbr class="def otherOptionCap" title="If Auto-zoom is checked, the map will resize to fit the maximum detonation effect radius modeled whenever the Detonate button is clicked.">?</abbr><span class="def-bracket2 otherOptionCap">]</span> <span><input type="checkbox" id="option_logdata"/></span> <label for="option_logdata"><span lang="capDontLog" class="otherOptionCap">Don't log usage data</span></label> <span class="def-bracket1 otherOptionCap">[</span><abbr class="def otherOptionCap" title="Anonymized usage data is collected whenever you model a detonation. This is used for scholarly analysis of site usage patterns and trends. See the FAQ for more information on what data is collected and how it is used. Checking the `Don't log usage data` checkbox will prevent this logging data from being recorded.">?</abbr><span class="def-bracket2 otherOptionCap">]</span>
+			<span class="interface_minimize_div"><a href="#" onclick="return false;" title="Minimize interface (good for screenshots)" id="minimize_interface"><img src='https://img.nuclearsecrecy.com/minify.gif'/></a></span>
+		</div>
+		<div id="endnote"></div>
+		<hr id="classic_link_hr"><div id="classic_link"></div><!-- deprecated -->
+	</div>
+	<hr id="footer_hr">
+	<div id="footer">
+        PROPERTY OF DEFENSECORPS. DO NOT DUPLICATE.
+        <br>
+        MERE POSSESION OF THIS PRODUCT IS PUNISHABLE BY LAW.
+	</div>
+	<hr id="hr_bottom"/>
+</div>
+<div id="hiddenFrame">
+	<div class="interface_restore_div">
+		<a href="#" onclick="return false;" title="Restore interface" id="restore_interface"><img src='https://img.nuclearsecrecy.com/maxify.gif'/></a>
+	</div>
+</div>
+</div>
+
+<div id="modals">
+	<div id="modal_window">
+		<div id="modal_contents" class="modal">
+			<div id="close_modal"><a title="Cancel" href="#" onclick='trigger_modal(-1); return false;'>&times;</a></div>
+			<div id="modal_header"></div>
+			<div id="modal_text"></div>
+			<div id="modal_buttons"></div>
+		</div>
+	</div>
+	<div id="modal_back"></div>
+</div>
+
+<div id="kmzmodal" class="modal">
+	<div id="kmzmenu">
+			<div id="closekmzwindow"><a title="Hide the Export to KMZ window" href="#" onclick='$("#kmzmodal").fadeOut(300); return false;'>&times;</a></div>
+			<h2><b>EXPORT TO KMZ</b> <sup><abbr class="beta" id="beta" title="This is an experimental feature">beta</abbr></sup> <span id="kmzmenu_detlist">No detonations to export!</span></h2> 
+			<div id="option_header">Render objects</div>
+			<div id="kmzmenu_basic">
+					<table id="kmzmenu_basic_table">
+					<tr>
+					<td>
+					<ul>
+					<input type="checkbox" id="render_rings" checked/> Render effects as rings on ground <span class="def-bracket1">[</span><abbr class="def" id="def_render_rings" title="Renders the effects rings visible in the NUKEMAP detonation settings as rings on the ground in the KMZ file.">?</abbr><span class="def-bracket2">]</span><br>
+					<input type="checkbox" id="render_fireball_sphere"/> Render fireball as 3D sphere <span class="def-bracket1">[</span><abbr class="def" id="def_render_fireball_sphere" title="Renders the fireball of the shot as a volumetric sphere centered at the burst height.">?</abbr><span class="def-bracket2">]</span><br>
+					<input type="checkbox" id="render_fallout" /> Render fallout contours on ground <span class="def-bracket1">[</span><abbr class="def" id="def_render_fallout" title="Render the various contours of long-range fallout as polygons in the KMZ file. Wind direction, fission fraction, wind speed, and radiation doses are taken from NUKEMAP detonation settings.">?</abbr><span class="def-bracket2">]</span><br>
+					<input type="checkbox" id="render_cloud" checked/> Render 3D mushroom cloud <span class="def-bracket1">[</span><abbr class="def" id="def_render_cloud" title="Renders the mushroom cloud as a 3D volumetric model, at its full height.">?</abbr><span class="def-bracket2">]</span><br>
+					</ul>
+					</td>
+					<td id="exportKMZcell">
+					<button disabled id="exportKMZ" onclick="exportKMZ();">Download file</button>
+					<div id="kmzfilecaption">Once you've downloaded the file, you can open it in<br><a href="https://www.google.com/earth/versions/#earth-pro" target="_blank">Google Earth for Desktop</a>.</div>
+					</td>
+					</tr>
+					</table>
+			</div>
+			<div id="option_header">Advanced display options <a id="kmzadv_showhide" href="#" onclick="kmzadv_showhide(); return false;" title="Show/hide advanced display options">[+]</a></div>
+			<div id="kmzmenu_adv">
+					<table id="kmzmenu_adv_table">
+					<tr>
+					<td>
+							<div class="adv_submenu">Effect ring settings:</div>
+							<ul>
+							Draw mode: <select id="ring_mode">
+									<option value="0" selected>Basic</option>
+									<option value="1">Donuts</option>
+									<option value="2">Line only</option>
+									<option value="3">Fill only</option>
+							</select> <span class="def-bracket1">[</span><abbr class="def" id="def_ring_mode" title="Effects rings can be drawn in several different ways. 'Basic' draws each ring as a filled-in circle surrounded by a line. 'Donut' makes rings so that each ring doesn't intersect or overlap with smaller rings inside of it. 'Line only' or 'fill only' draws the same rings as 'Basic' but with or without a fill or line.">?</abbr><span class="def-bracket2">]</span><br>
+							Altitude mode: <select id="ring_altitude_mode">
+									<option value="1" selected>Staggered</option>
+									<option value="0">Single</option>
+							</select> <span class="def-bracket1">[</span><abbr class="def" id="def_ring_altitude_mode" title="Effects rings with a 'Single' altitude are all drawn at the exact same base altitude. 'Staggered' draws the largest ring at the base altitude, but each smaller ring is offset upwards by the stagger distance.">?</abbr><span class="def-bracket2">]</span><br>
+							Base altitude (m): <input type="text" id="ring_altitude_base" value="150"/> <span class="def-bracket1">[</span><abbr class="def" id="def_ring_altitude_base" title="The altitude at which the bottom effects rings are drawn. Units are meters.">?</abbr><span class="def-bracket2">]</span><br>
+							Stagger distance (m): <input type="text" id="ring_altitude_stack" value="5"/> <span class="def-bracket1">[</span><abbr class="def" id="def_ring_altitude_stack" title="If the ring altitude mode is set to 'staggered', the distance in which each ring is drawn above smaller rings. Units are meters.">?</abbr><span class="def-bracket2">]</span><br>
+							Fill opacity (0-1): <input type="text" id="ring_fill_alpha" value=".5"/> <span class="def-bracket1">[</span><abbr class="def" id="def_ring_fill_alpha" title="If rings have a fill, the opacity (transparency) of the fill color. 0 = transparent, .5 = 50% transparent/opaque, 1 = fully opaque.">?</abbr><span class="def-bracket2">]</span><br>
+							Line width (px): <input type="text" id="ring_line_width" value="2"/> <span class="def-bracket1">[</span><abbr class="def" id="def_ring_line_width" title="If rings have a line, the width of the line.">?</abbr><span class="def-bracket2">]</span><br>
+							Line opacity (0-1): <input type="text" id="ring_line_alpha" value=".8"/> <span class="def-bracket1">[</span><abbr class="def" id="def_ring_line_alpha" title="If rings have a line, the opacity (transparency) of the line. 0 = transparent, .5 = 50% transparent/opaque, 1 = fully opaque.">?</abbr><span class="def-bracket2">]</span><br>
+							Circle steps (16-128): <input type="text" id="circle_steps" value="64"/> <span class="def-bracket1">[</span><abbr class="def" id="def_circle_steps" title="Ring circles are manually drawn circles made up of many line segments. This setting indicates how many line segments per circle. A lower number results in a circle whose edges are noticibly not round, higher values are rounder but require more size and memory to render.">?</abbr><span class="def-bracket2">]</span><br>
+							</ul>
+					</td>
+					<td>
+						<div class="adv_submenu">Fallout contour settings:</div>
+							<ul>
+							Draw mode: <select id="fallout_mode">
+									<option value="0" selected>Basic</option>
+									<option value="2">Line only</option>
+									<option value="3">Fill only</option>
+							</select> <span class="def-bracket1">[</span><abbr class="def" id="def_fallout_mode" title="Fallout contours can be drawn in several different ways. 'Basic' draws each contour as a filled-in polygon surrounded by a line. 'Line only' or 'fill only' draws the same contours as 'Basic' but with or without a fill or line.">?</abbr><span class="def-bracket2">]</span><br>
+							Altitude mode: <select id="fallout_altitude_mode">
+									<option value="1" selected>Staggered</option>
+									<option value="0">Single</option>
+							</select> <span class="def-bracket1">[</span><abbr class="def" id="def_fallout_altitude_mode" title="Fallout contours with a 'Single' altitude are all drawn at the exact same base altitude. 'Staggered' draws the largest contour at the base altitude, but each smaller contour is offset upwards by the stagger distance.">?</abbr><span class="def-bracket2">]</span><br>
+							Base altitude (m): <input type="text" id="fallout_altitude_base" value="100"/> <span class="def-bracket1">[</span><abbr class="def" id="def_fallout_altitude_base" title="The altitude at which the bottom contours are drawn. Units are meters.">?</abbr><span class="def-bracket2">]</span><br>
+							Stagger distance (m): <input type="text" id="fallout_altitude_stack" value="5"/> <span class="def-bracket1">[</span><abbr class="def" id="def_fallout_altitude_stack" title="If the fallout contour mode is set to 'staggered', the distance in which each contour is drawn above smaller contours. Units are meters.">?</abbr><span class="def-bracket2">]</span><br>
+							Fill opacity (0-1): <input type="text" id="fallout_fill_alpha" value=".4"> <span class="def-bracket1">[</span><abbr class="def" id="def_fallout_fill_alpha" title="If fallout contours have a fill, the opacity (transparency) of the fill color. 0 = transparent, .5 = 50% transparent/opaque, 1 = fully opaque.">?</abbr><span class="def-bracket2">]</span><br>
+							Line width (px): <input type="text" id="fallout_line_width" value="1"/> <span class="def-bracket1">[</span><abbr class="def" id="def_fallout_line_alpha" title="If fallout contours have a line, the opacity (transparency) of the line. 0 = transparent, .5 = 50% transparent/opaque, 1 = fully opaque.">?</abbr><span class="def-bracket2">]</span><br>
+							Line opacity (0-1): <input type="text" id="fallout_line_alpha" value=".6"/> <span class="def-bracket1">[</span><abbr class="def" id="def_fallout_line_alpha" title="If fallout lines have a fill, the opacity (transparency) of the line color. 0 = transparent, .5 = 50% transparent/opaque, 1 = fully opaque.">?</abbr><span class="def-bracket2">]</span><br>
+						</ul>
+					</td>
+					</tr>
+					<tr>
+					<td colspan=2>
+							<div class="adv_submenu">KMZ settings:</div>
+							<ul>
+							Polygon altitude mode: <select id="ring_KMLaltitudeMode">
+									<option value="0" selected>Absolute</option>
+									<option value="1">Relative to ground</option>
+							</select> <span class="def-bracket1">[</span><abbr class="def" id="def_ring_KMLaltitudeMode" title="KML polygons are rendered at various altitudes. If 'absolute' mode is used, it renders them regardless of the height of the ground. If it is 'relative to ground,' it will take into account the terrain. This setting is entirely cosmetic. This only applies to rings and fallout polygons, not 3D models.">?</abbr><span class="def-bracket2">]</span><br>
+							<input type="checkbox" id="force_kml"> Use KML, not KMZ (larger file) <span class="def-bracket1">[</span><abbr class="def" id="def_force_kml" title="Instead of using a KMZ (zipped) file, downloads a KML file instead. KML files are easier to edit and process manually, but are larger files and cannot have models embedded in them. If selected, automatically results in any models being remotely linked as opposed to embedded.">?</abbr><span class="def-bracket2">]</span><br>
+							<input type="checkbox" id="remote_dae"> Use remotely linked 3D models (smaller file) <span class="def-bracket1">[</span><abbr class="def" id="def_remote_dae" title="Many of the 3D models exist as external COLLADA (.dae) files. They can either be embedded into the KMZ file (which results in a slightly larger file), or linked remotely (which requires constant Internet connectivity and sometimes increases render times). This setting is automatically used if KML export is used (because KML cannot embed external files).">?</abbr><span class="def-bracket2">]</span><br>
+							</ul>
+					</td>
+					</tr>
+					</table>
+			</div>
+			<form id="kmzForm" action="https://db.nuclearsecrecy.com/nukemap/scripts/export_kmz.php" method="POST" target="_blank"></form>
+	</div>
+</div>
+<div id="debugOverlay"><button id="debugOverlayHide" title="Hide the debug screen" onclick="document.getElementById('debugOverlay').style.display='none'">&times;</button>
+<h3>Debug log:</h3>
+<div id="debugLogDiv"></div>
+<div id="debugCopyLogDiv"><button onclick="debugCopy()" id="debugCopyLog">Copy log to clipboard</button></div>
+</div>
+<div id="embedded">
+	<div id="embedded_back"></div>
+	<div id="loadingMapMarker"><div id="loadingMapAtom"></div></div>
+	<div id="preload_title" class='nukemap_name'>NUKEMAP</div>
+	<div id="embedded_cap">Click anywhere to load visualization</div>
+</div>
+<div id="preload"><div id="preload_text"><div id="preload_title">NUKEMAP</div><div id="preload_cap">Loading...</div></div></div>
+<button id="debugOverlayShow" onclick="document.getElementById('debugOverlay').style.display='block'">Show debug output</button>
+<script>
+if(DEBUG) console.log("DOM composed");
+if(EMBEDDED && !(window.location.href.replaceAll("?","&").indexOf("&embedlive=1")>-1)) document.getElementById("embedded").style.display = "block"; //faster
+
+
+</body></html>
